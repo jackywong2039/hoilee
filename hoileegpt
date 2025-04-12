@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hoi Lee聊天助手</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        h1 {
+            color: #444;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        #chat-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+            height: 500px;
+            overflow-y: auto;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 18px;
+            line-height: 1.5;
+            max-width: 80%;
+            word-wrap: break-word;
+            white-space: pre-wrap; 
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+        }
+        .ai-message {
+            background-color: #f1f1f1;
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+        }
+        .message img {
+            max-width: 100%;
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+        #input-area {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        #text-input-area {
+            display: flex;
+            gap: 10px;
+        }
+        #user-input {
+            flex-grow: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+            resize: vertical;
+            min-height: 60px;
+            max-height: 200px;
+            font-family: inherit;
+        }
+        #user-input:focus {
+            border-color: #4CAF50;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 12px 24px;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        #send-button {
+            background-color: #4CAF50;
+        }
+        #send-button:hover {
+            background-color: #45a049;
+        }
+        #clear-button {
+            background-color: #f44336;
+        }
+        #clear-button:hover {
+            background-color: #d32f2f;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #file-input {
+            display: none;
+        }
+        #file-upload-button {
+            background-color: #2196F3;
+        }
+        #file-upload-button:hover {
+            background-color: #0b7dda;
+        }
+        #file-info {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.3);
+            border-radius: 50%;
+            border-top-color: #000;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .preview-image {
+            max-width: 200px;
+            max-height: 200px;
+            margin-top: 10px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Hoi Lee</h1>
+
+    <div id="chat-container"></div>
+    
+    <div id="input-area">
+        <div id="text-input-area">
+            <textarea id="user-input" placeholder="輸入您的消息..." autocomplete="off" rows="1"></textarea>
+            <div class="button-group">
+                <button id="send-button">發送</button>
+                <button id="clear-button">清除記錄</button>
+            </div>
+        </div>
+        <div>
+            <input type="file" id="file-input" accept="image/*">
+            <button id="file-upload-button">上傳圖片</button>
+            <span id="file-info"></span>
+            <div id="image-preview"></div>
+        </div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            API_KEY: "sk-hJW9RzgBgJHZS9t3PV0X8UqF6NxoMcZNIAKoHiKDzjmuldn2", 
+            API_ENDPOINT: "https://chatapi.littlewheat.com/v1/chat/completions",
+            MODEL: "gpt-4", 
+            MAX_TOKENS: 1000,
+            TEMPERATURE: 0.7
+        };
+        
+        let conversationHistory = [];
+        let selectedFile = null;
+        let imagePreviewUrl = null;
+        
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const clearButton = document.getElementById('clear-button');
+        const fileInput = document.getElementById('file-input');
+        const fileUploadButton = document.getElementById('file-upload-button');
+        const fileInfo = document.getElementById('file-info');
+        const imagePreview = document.getElementById('image-preview');
+        
+        function init() {
+            const savedHistory = localStorage.getItem('conversationHistory');
+            if (savedHistory) {
+                conversationHistory = JSON.parse(savedHistory);
+                renderConversation();
+            }
+        }
+        
+        function renderConversation() {
+            chatContainer.innerHTML = '';
+            conversationHistory.forEach(msg => {
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message');
+                messageDiv.classList.add(msg.role === 'user' ? 'user-message' : 'ai-message');
+                
+                if (typeof msg.content === 'string') {
+                    const contentWithBreaks = msg.content.replace(/\n/g, '<br>');
+                    messageDiv.innerHTML = contentWithBreaks;
+                } 
+                else if (Array.isArray(msg.content)) {
+                    msg.content.forEach(part => {
+                        if (part.type === 'text') {
+                            const textPart = document.createElement('div');
+                            textPart.innerHTML = part.text.replace(/\n/g, '<br>');
+                            messageDiv.appendChild(textPart);
+                        } else if (part.type === 'image_url') {
+                            const img = document.createElement('img');
+                            img.src = part.image_url.url;
+                            messageDiv.appendChild(img);
+                        }
+                    });
+                }
+                
+                chatContainer.appendChild(messageDiv);
+            });
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        function clearConversation() {
+            if (conversationHistory.length === 0) return;
+            
+            if (confirm('確定要清除所有對話記錄嗎？此操作無法撤銷！')) {
+                conversationHistory = [];
+                localStorage.removeItem('conversationHistory');
+                renderConversation();
+            }
+        }
+        
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (!file.type.match('image.*')) {
+                alert('請選擇圖片文件！');
+                return;
+            }
+            
+            if (file.size > 5 * 1024 * 1024) {
+                alert('圖片大小不能超過5MB！');
+                return;
+            }
+            
+            selectedFile = file;
+            fileInfo.textContent = `已選擇: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`;
+            
+            if (imagePreviewUrl) {
+                URL.revokeObjectURL(imagePreviewUrl);
+            }
+            
+            imagePreviewUrl = URL.createObjectURL(file);
+            imagePreview.innerHTML = '';
+            
+            const previewImg = document.createElement('img');
+            previewImg.src = imagePreviewUrl;
+            previewImg.classList.add('preview-image');
+            imagePreview.appendChild(previewImg);
+        }
+        
+        function clearFileSelection() {
+            if (selectedFile) {
+                if (imagePreviewUrl) {
+                    URL.revokeObjectURL(imagePreviewUrl);
+                    imagePreviewUrl = null;
+                }
+                selectedFile = null;
+                fileInput.value = '';
+                fileInfo.textContent = '';
+                imagePreview.innerHTML = '';
+            }
+        }
+        
+        async function sendMessage() {
+            const messageText = userInput.value.trim();
+            if (!messageText && !selectedFile) return;
+            
+            let messageContent = [];
+            
+            if (messageText) {
+                messageContent.push({
+                    type: "text",
+                    text: messageText
+                });
+            }
+            
+            if (selectedFile) {
+                const base64Image = await fileToBase64(selectedFile);
+                messageContent.push({
+                    type: "image_url",
+                    image_url: {
+                        url: `data:${selectedFile.type};base64,${base64Image}`
+                    }
+                });
+            }
+            
+            conversationHistory.push({ 
+                role: 'user', 
+                content: messageContent.length === 1 && messageContent[0].type === 'text' 
+                    ? messageText 
+                    : messageContent
+            });
+            
+            renderConversation();
+            
+            userInput.value = '';
+            clearFileSelection();
+            
+            sendButton.disabled = true;
+            clearButton.disabled = true;
+            fileUploadButton.disabled = true;
+            sendButton.innerHTML = '發送中 <span class="loading"></span>';
+            
+            try {
+                const response = await fetch(CONFIG.API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${CONFIG.API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: CONFIG.MODEL,
+                        messages: conversationHistory,
+                        max_tokens: CONFIG.MAX_TOKENS,
+                        temperature: CONFIG.TEMPERATURE
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || `API請求失敗: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                const aiResponse = data.choices[0].message.content;
+                
+                conversationHistory.push({ role: 'assistant', content: aiResponse });
+                renderConversation();
+                
+                localStorage.setItem('conversationHistory', JSON.stringify(conversationHistory));
+            } catch (error) {
+                console.error('錯誤:', error);
+                const errorDiv = document.createElement('div');
+                errorDiv.classList.add('message', 'ai-message');
+                errorDiv.textContent = `抱歉，發生錯誤: ${error.message}`;
+                chatContainer.appendChild(errorDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            } finally {
+                sendButton.disabled = false;
+                clearButton.disabled = false;
+                fileUploadButton.disabled = false;
+                sendButton.textContent = '發送';
+                userInput.focus();
+            }
+        }
+        
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+        
+        sendButton.addEventListener('click', sendMessage);
+        clearButton.addEventListener('click', clearConversation);
+        fileUploadButton.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        init();
+    </script>
+</body>
+</html>
